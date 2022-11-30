@@ -73,6 +73,10 @@ static inline int hash_node_isempty(hash_node_ptr node) {
 
 static void hash_map_init(hash_map_ptr map) {
 	memset(map, 0, sizeof(*map));
+	map->nodes = malloc(sizeof(*map->nodes) * HASH_MAP_MINSIZE);
+	memset(map->nodes, 0, sizeof(*map->nodes) * HASH_MAP_MINSIZE);
+	map->size = HASH_MAP_MINSIZE;
+	map->lastfree = &map->nodes[HASH_MAP_MINSIZE - 1];
 }
 static void hash_map_clear(hash_map_ptr map) {
 	if (map->nodes) {
@@ -135,13 +139,6 @@ static void hash_map_rehash(hash_map_ptr map, hash_map_ptr newmap) {
 	map->size = newmap->size;
 }
 static void hash_map_reserve(hash_map_ptr map) {
-	if (!map->nodes) {
-		map->nodes = malloc(sizeof(*map->nodes) * HASH_MAP_MINSIZE);
-		memset(map->nodes, 0, sizeof(*map->nodes) * HASH_MAP_MINSIZE);
-		map->size = HASH_MAP_MINSIZE;
-		map->lastfree = &map->nodes[HASH_MAP_MINSIZE - 1];
-		return;
-	}
 	size_t newsize = map->size;
 	if (map->n > HASH_MAP_MINSIZE * 0.5 && map->n * 1.5 > map->size) {
 		//expand
@@ -293,6 +290,10 @@ static inline int valuevec_get(int_valuevecptr valuevec, size_t index) {
 	return valuevec->values[index];
 }
 
+static inline void valuevec_clear(int_valuevecptr valuevec) {
+	valuevec->n = 0;
+}
+
 static inline size_t valuevec_count(int_valuevecptr valuevec) {
 	return valuevec->n;
 }
@@ -326,6 +327,10 @@ static void calc_rect(aoi_contextptr context, float x, float y, int* lt_x, int* 
 	*rb_y = yindex + context->view_range;
 	*lt_x = xindex - context->view_range;
 	*rb_x = xindex + context->view_range;
+	if (*lt_y < 0) *lt_y = 0;
+	if (*lt_x < 0) *lt_x = 0;
+	if (*rb_y > context->y_grid_count) *rb_y = context->y_grid_count;
+	if (*rb_x > context->x_grid_count) *rb_x = context->x_grid_count;
 }
 
 static aoi_objectptr newobj(int id, short layer, short view_layer, float x, float y) {
@@ -435,7 +440,30 @@ aoi_contextptr aoi_new(float width, float height, int grid_width, int view_range
 }
 
 void aoi_delete(aoi_contextptr context) {
-	//...
+	if (!context) return;
+	size_t index = 0;
+	hash_map_ptr map = &context->obj_map;
+	hash_node_ptr node = hash_map_next(map, 0, &index);
+	while (node) {
+		aoi_objectptr obj = (aoi_objectptr)node->value;
+		freeobj(obj);
+		node = hash_map_next(map, index, &index);
+	}
+	hash_map_clear(map);
+
+	map = &context->grid_map;
+	node = hash_map_next(map, 0, &index);
+	while (node) {
+		aoi_gridptr grid = (aoi_gridptr)node->value;
+		for (int i=0; i<AOI_MAXLAYER; i++) {
+			if (grid->layer[i]) {
+				dlink_free(grid->layer[i]);
+			}
+		}
+		freegrid(grid);
+		node = hash_map_next(map, index, &index);
+	}
+
 	free(context);
 }
 
@@ -449,10 +477,6 @@ int aoi_enter(aoi_contextptr context, int id, float x, float y, short layer,
 		freeobj(obj);
 		return 2;
 	}
-	int gridid = getgridid(context, x, y);
-	//push grid
-	grid_push(context, gridid, obj);
-
 	//calc rect
 	int lt_x, lt_y, rb_x, rb_y;
 	calc_rect(context, x, y, &lt_x, &lt_y, &rb_x, &rb_y);
@@ -470,6 +494,9 @@ int aoi_enter(aoi_contextptr context, int id, float x, float y, short layer,
 		}
 	}
 	
+	//push grid
+	int gridid = getgridid(context, x, y);
+	grid_push(context, gridid, obj);
 	return 0;
 }
 
@@ -479,6 +506,9 @@ int aoi_leave(aoi_contextptr context, int id, int_valuevecptr leave_other) {
 		return 1;
 	}
 	aoi_objectptr obj = (aoi_objectptr)objnode->value;
+	//pop grid
+	int gridid = getgridid(context, obj->x, obj->y);
+	grid_pop(context, gridid, obj);
 	//calc rect
 	int lt_x, lt_y, rb_x, rb_y;
 	calc_rect(context, obj->x, obj->y, &lt_x, &lt_y, &rb_x, &rb_y);
@@ -494,8 +524,7 @@ int aoi_leave(aoi_contextptr context, int id, int_valuevecptr leave_other) {
 			}
 		}
 	}
-	int gridid = getgridid(context, obj->x, obj->y);
-	grid_pop(context, gridid, obj);
+	
 	freeobj(obj);
 	return 0;
 }
@@ -513,7 +542,7 @@ int aoi_move(aoi_contextptr context, int id, float x, float y, int_valuevecptr e
 	if (ogridid == ngridid) {
 		return 0;
 	}
-	grid_push(context, ngridid, obj);
+	
 	grid_pop(context, ogridid, obj);
 
 	int olt_x, olt_y, orb_x, orb_y;
@@ -549,15 +578,36 @@ int aoi_move(aoi_contextptr context, int id, float x, float y, int_valuevecptr e
 			}
 		}
 	}
+	grid_push(context, ngridid, obj);
 	return 0;
 }
 
-int aoi_print(aoi_contextptr context) {
+int aoi_viewlist(aoi_contextptr context, int id, int_valuevecptr viewed) {
+	hash_node_ptr objnode = hash_map_get(&context->obj_map, id);
+	if (!objnode) {
+		return 1;
+	}
+	aoi_objectptr obj = (aoi_objectptr)objnode->value;
+	int lt_x, lt_y, rb_x, rb_y;
+	calc_rect(context, obj->x, obj->y, &lt_x, &lt_y, &rb_x, &rb_y);
 
+	//leave view list
+	for (int y = lt_y; y <= rb_y; y++) {
+		for (int x = lt_x; x <= rb_x; x++) {
+			int gridid = calcgridid(x, y, context->x_grid_count);
+			hash_node_ptr gridnode = hash_map_get(&context->grid_map, gridid);
+			if (gridnode) {
+				aoi_gridptr grid = (aoi_gridptr)gridnode->value;
+				grid_viewedlist(grid, obj, viewed);
+			}
+		}
+	}
+	return 0;
 }
 /* aoi module interface end*/
 
 int main(int argc, char** argv) {
+	/*
 	struct hash_map map;
 	hash_map_init(&map);
 
@@ -646,31 +696,27 @@ int main(int argc, char** argv) {
 		node = hash_map_next(&map, index, &index);
 	}
 	printf("map size:%d, map n:%d\n", map.size, map.n);
-
+*/
 	aoi_objectptr obj1 = newobj(1,1,1,1.0f,1.0f);
 	aoi_objectptr obj2 = newobj(2,1,1,1.0f,1.0f);
 	aoi_objectptr obj3 = newobj(3,1,1,1.0f,1.0f);
-	dlinkptr link = dlink_new();
-	dlink_add(link, &obj1->node);
-	dlink_add(link, &obj2->node);
-	dlink_add(link, &obj3->node);
-dlink_nodeptr p;
-printf("-------------------\n");
-p = link->head.next;
-while (p != &link->tail) {
-	aoi_objectptr obj = (aoi_objectptr)p;
-	printf("%d\n", obj->id);
-	p = p->next;
-}
-	dlink_remove(&obj1->node);
-printf("-------------------\n");
-p = link->head.next;
-while (p != &link->tail) {
-	aoi_objectptr obj = (aoi_objectptr)p;
-	printf("%d\n", obj->id);
-	p = p->next;
-}
-	dlink_free(link);
+	aoi_contextptr context = aoi_new(1000.0f, 1000.0f, 20, 1);
 
+	struct int_valuevec enter_self, enter_other;
+	valuevec_init(&enter_self);
+	valuevec_init(&enter_other);
+
+	aoi_enter(context, 1, 1, 1, 1, 0xFFFF, &enter_self, &enter_other);
+	valuevec_clear(&enter_self);
+	valuevec_clear(&enter_other);
+	aoi_enter(context, 2, 1, 1, 1, 0xFFFF, &enter_self, &enter_other);
+	valuevec_clear(&enter_self);
+	valuevec_clear(&enter_other);
+	aoi_enter(context, 3, 1, 1, 1, 0xFFFF, &enter_self, &enter_other);
+	valuevec_clear(&enter_self);
+	valuevec_clear(&enter_other);
+	aoi_move(context, 1, 100, 100, &enter_self, &enter_other);
+
+	aoi_delete(context);
 	printf("Finished\n");
 }
