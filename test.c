@@ -91,6 +91,22 @@ void test_hashmap() {
 	printf("map size:%d, map n:%d\n", map.size, map.n);
 }
 
+void test_hashmap1() {
+	struct hash_map map;
+	hash_map_init(&map);
+	srand(time(0));
+	
+	for (int i=0; i<1000000; i++) {
+		hash_map_put(&map, rand()%1000000, 1);
+	}
+	for (int i=0; i<1000000; i++) {
+		if (hash_map_get(&map, i) )
+			hash_map_remove(&map, i);
+	}
+
+	hash_map_clear(&map);
+}
+
 void test_aoi() {
 	aoi_contextptr context = aoi_new(1000.0f, 1000.0f, 20, 1);
 
@@ -125,5 +141,6 @@ void test_aoi() {
 int main(int argc, char** argv) {
 	//test_hashmap();
     test_aoi();
+	//test_hashmap1();
 	printf("Finished\n");
 }

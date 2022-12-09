@@ -137,6 +137,7 @@ static void hash_map_rehash(hash_map_ptr map, hash_map_ptr newmap) {
 	free(map->nodes);
 	map->nodes = newmap->nodes;
 	map->size = newmap->size;
+	map->lastfree = newmap->lastfree;
 }
 static void hash_map_reserve(hash_map_ptr map) {
 	size_t newsize = map->size;
@@ -358,7 +359,7 @@ static aoi_gridptr newgrid(int id) {
 static void freegrid(aoi_gridptr grid) {
 	for (int i=0; i<AOI_MAXLAYER; i++) {
 		if (grid->layer[i]) {
-			free(grid->layer[i]);
+			dlink_free(grid->layer[i]);
 		}
 	}
 	free(grid);
@@ -455,11 +456,6 @@ void aoi_delete(aoi_contextptr context) {
 	node = hash_map_next(map, 0, &index);
 	while (node) {
 		aoi_gridptr grid = (aoi_gridptr)node->value;
-		for (int i=0; i<AOI_MAXLAYER; i++) {
-			if (grid->layer[i]) {
-				dlink_free(grid->layer[i]);
-			}
-		}
 		freegrid(grid);
 		node = hash_map_next(map, index, &index);
 	}
