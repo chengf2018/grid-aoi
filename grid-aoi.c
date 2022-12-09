@@ -153,7 +153,7 @@ static void hash_map_reserve(hash_map_ptr map) {
 		memset(newnodes, 0, sizeof(*newnodes) * newsize);
 
 		struct hash_map newmap;
-		hash_map_init(&newmap);
+		memset(&newmap, 0, sizeof(newmap));
 		newmap.nodes = newnodes;
 		newmap.size = newsize;
 		newmap.lastfree = &newnodes[newsize - 1];
@@ -463,7 +463,7 @@ void aoi_delete(aoi_contextptr context) {
 		freegrid(grid);
 		node = hash_map_next(map, index, &index);
 	}
-
+	hash_map_clear(map);
 	free(context);
 }
 
@@ -524,7 +524,7 @@ int aoi_leave(aoi_contextptr context, int id, int_valuevecptr leave_other) {
 			}
 		}
 	}
-	
+	hash_map_remove(&context->obj_map, id);
 	freeobj(obj);
 	return 0;
 }
