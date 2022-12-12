@@ -1,7 +1,5 @@
-#include <stdio.h>
-#include <malloc.h>
-#include <string.h>
-#include <assert.h>
+#include "grid-aoi.h"
+
 #ifndef unlikely
 	#define likely(x) __builtin_expect(!!(x), 1)
 	#define unlikely(x) __builtin_expect(!!(x), 0)
@@ -21,17 +19,11 @@ typedef struct dlink {
 	struct dlink_node tail;
 }*dlinkptr;
 
-typedef struct int_valuevec {
-	int *values;
-	size_t n;
-	size_t size;
-}*int_valuevecptr;
-
 typedef struct aoi_object {
 	struct dlink_node node;
 	int id;
-	short layer;//对象当前的层
-	short view_layer;//对象能看到的层,16位
+	short layer;
+	short view_layer;
 	float x;
 	float y;
 }*aoi_objectptr;
@@ -41,30 +33,9 @@ typedef struct aoi_grid {
 	dlinkptr layer[AOI_MAXLAYER];
 }*aoi_gridptr;
 
-typedef struct hash_node
-{
-	void *value;
-	int key;
-	int next;
-}*hash_node_ptr;
 
-typedef struct hash_map {
-	struct hash_node *nodes;
-	struct hash_node *lastfree;
-	size_t size;
-	size_t n;
-}*hash_map_ptr;
 
-typedef struct aoi_context {
-	float width;
-	float height;
-	int grid_width;
-	int view_range;
-	int x_grid_count;
-	int y_grid_count;
-	struct hash_map obj_map;
-	struct hash_map grid_map;
-}*aoi_contextptr;
+
 
 /* hash map begin */
 static inline int hash_node_isempty(hash_node_ptr node) {
@@ -78,6 +49,7 @@ static void hash_map_init(hash_map_ptr map) {
 	map->size = HASH_MAP_MINSIZE;
 	map->lastfree = &map->nodes[HASH_MAP_MINSIZE - 1];
 }
+
 static void hash_map_clear(hash_map_ptr map) {
 	if (map->nodes) {
 		free(map->nodes);
@@ -85,6 +57,7 @@ static void hash_map_clear(hash_map_ptr map) {
 	map->nodes = NULL;
 	map->size = map->n = 0;
 }
+
 static hash_node_ptr hash_map_getfreepos(hash_map_ptr map) {
 	for (int i = 0; i < 2; i++) {
 		while (map->lastfree > map->nodes) {
@@ -96,6 +69,7 @@ static hash_node_ptr hash_map_getfreepos(hash_map_ptr map) {
 	}
 	return NULL;
 }
+
 static void hash_map_newkey(hash_map_ptr map, int key, void *value) {
 	int hash = calchash(key, map->size);
 	hash_node_ptr node = &map->nodes[hash];
@@ -105,7 +79,7 @@ static void hash_map_newkey(hash_map_ptr map, int key, void *value) {
 		int nodehash = calchash(node->key, map->size);
 		if (nodehash == hash) { //main position?
 			if (node->next != 0)
-				newnode->next = (int)((node->next + node) - newnode);
+				newnode->next = (int)(node->next + node - newnode);
 			node->next = (int)(newnode - node);
 			node = newnode;
 		}
@@ -139,6 +113,7 @@ static void hash_map_rehash(hash_map_ptr map, hash_map_ptr newmap) {
 	map->size = newmap->size;
 	map->lastfree = newmap->lastfree;
 }
+
 static void hash_map_reserve(hash_map_ptr map) {
 	size_t newsize = map->size;
 	if (map->n > HASH_MAP_MINSIZE * 0.5 && map->n * 1.5 > map->size) {
@@ -277,33 +252,33 @@ static void reservevaluevec(int_valuevecptr valuevec) {
 	}
 }
 
-static inline void valuevec_init(int_valuevecptr valuevec) {
+inline void valuevec_init(int_valuevecptr valuevec) {
 	valuevec->values = NULL;
 	valuevec->n = valuevec->size = 0;
 }
 
-static void valuevec_push(int_valuevecptr valuevec, int value) {
+void valuevec_push(int_valuevecptr valuevec, int value) {
 	reservevaluevec(valuevec);
 	valuevec->values[valuevec->n] = value;
 	valuevec->n ++;
 }
-static inline int valuevec_get(int_valuevecptr valuevec, size_t index) {
+inline int valuevec_get(int_valuevecptr valuevec, size_t index) {
 	return valuevec->values[index];
 }
 
-static inline void valuevec_clear(int_valuevecptr valuevec) {
+inline void valuevec_clear(int_valuevecptr valuevec) {
 	valuevec->n = 0;
 }
 
-static inline size_t valuevec_count(int_valuevecptr valuevec) {
+inline size_t valuevec_count(int_valuevecptr valuevec) {
 	return valuevec->n;
 }
 
-static inline size_t valuevec_size(int_valuevecptr valuevec) {
+inline size_t valuevec_size(int_valuevecptr valuevec) {
 	return valuevec->size;
 }
 
-static void valuevec_free(int_valuevecptr valuevec) {
+void valuevec_free(int_valuevecptr valuevec) {
 	if (valuevec->values)
 		free(valuevec->values);
 	valuevec->values = NULL;
@@ -460,6 +435,7 @@ void aoi_delete(aoi_contextptr context) {
 		node = hash_map_next(map, index, &index);
 	}
 	hash_map_clear(map);
+
 	free(context);
 }
 
